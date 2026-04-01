@@ -45,6 +45,7 @@
 
     <script src="https://cdn.ethers.io/lib/ethers-5.2.umd.min.js"></script>
     <script>
+      // Endpoints that work with CORS
       const RPC_ENDPOINTS = [
         'https://mainnet-rpc.axonchain.ai/',
         'https://rpc.axonchain.ai/'
@@ -53,6 +54,7 @@
       const getRpc = () => RPC_ENDPOINTS[currentRpcIdx];
 
       async function rpc(method, params = []) {
+        const payload = { jsonrpc: '2.0', id: 1, method, params };
         const options = {
           method: 'POST',
           mode: 'cors',
@@ -62,7 +64,7 @@
             'Content-Type': 'application/json',
             'Accept': 'application/json'
           },
-          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })
+          body: JSON.stringify(payload)
         };
         let attempts = 0;
         const maxAttempts = 3;
@@ -75,9 +77,9 @@
             return data.result;
           } catch (err) {
             attempts++;
-            // Switch to next endpoint on network/CORS error
-            if ((err.name === 'TypeError' && err.message.includes('Failed to fetch')) && currentRpcIdx < RPC_ENDPOINTS.length - 1) {
-              console.warn(`RPC ${getRpc()} failed (${err.message}), switching to next`);
+            // On network/CORS error, try next endpoint
+            if ((err.name === 'TypeError' || (err.message && err.message.includes('Failed'))) && currentRpcIdx < RPC_ENDPOINTS.length - 1) {
+              console.warn(`Endpoint ${getRpc()} failed (${err.message}), switching`);
               currentRpcIdx++;
               continue;
             }
@@ -120,7 +122,6 @@
 
           const tbody = document.querySelector('#blocksTable tbody');
           tbody.innerHTML = '';
-          // Fetch only the latest 3 blocks to avoid rate limits
           const start = Math.max(blockNum - 2, 0);
           for (let i = start; i <= blockNum; i++) {
             const block = await rpc('eth_getBlockByNumber', ['0x' + i.toString(16), false]);
@@ -135,7 +136,8 @@
           }
         } catch (e) {
           console.error(e);
-          document.getElementById('blockNumber').textContent = 'Error loading blocks.';
+          document.getElementById('blockNumber').textContent = 'Error loading blocks. Tap to retry.';
+          document.getElementById('blockNumber').onclick = loadLatestBlocks;
         }
       }
 
@@ -146,14 +148,14 @@
         if (!query) return;
         try {
           if (query.startsWith('0x') && query.length === 66) {
-            // Assume tx hash or block hash (66 chars)
+            // tx hash or block hash
             const tx = await rpc('eth_getTransactionByHash', [query]);
             if (tx) {
               resultDiv.innerHTML = `<h2>Transaction</h2>
                 <table>
                   <tr><th>Hash</th><td class="mono">${tx.hash}</td></tr>
                   <tr><th>Block</th><td class="mono">${tx.blockNumber ? weiToAxon(tx.blockNumber) : 'Pending'}</td></tr>
-                  <tr><th>From</strong></td><td class="mono value">${tx.from}</td></tr>
+                  <tr><th>From</td><td class="mono value">${tx.from}</td></tr>
                   <tr><th>To</td><td class="mono value">${tx.to || 'Contract Creation'}</td></tr>
                   <tr><th>Value (AXON)</th><td>${weiToAxon(tx.value)}</td></tr>
                   <tr><th>Gas</th><td>limit: ${tx.gas}, used: ${tx.gasUsed || 'n/a'}</td></tr>
@@ -174,7 +176,6 @@
               return;
             }
           } else if (/^0x[0-9a-fA-F]{40}$/.test(query)) {
-            // Address
             const balWei = await rpc('eth_getBalance', [query, 'latest']);
             const bal = weiToAxon(balWei);
             const code = await rpc('eth_getCode', [query, 'latest']);
@@ -211,13 +212,13 @@
           }
           resultDiv.innerHTML = '<p class="error">Not found or invalid input.</p>';
         } catch (e) {
-          resultDiv.innerHTML = `<p class="error">Error: ${e.message}</p>`;
+          resultDiv.innerHTML = `<p class="error">Error: ${e.name}: ${e.message}</p>`;
         }
       }
 
       // Initial load
       loadLatestBlocks();
-      setInterval(loadLatestBlocks, 60000); // every 60s
+      setInterval(loadLatestBlocks, 60000);
     </script>
 </body>
 </html>
