@@ -45,155 +45,179 @@
 
     <script src="https://cdn.ethers.io/lib/ethers-5.2.umd.min.js"></script>
     <script>
-      const RPC = 'https://api.codetabs.com/v1/proxy?quest=https://mainnet-rpc.axonchain.ai/';
+      const RPC_ENDPOINTS = [
+        'https://mainnet-rpc.axonchain.ai/',
+        'https://rpc.axonchain.ai/'
+      ];
+      let currentRpcIdx = 0;
+      const getRpc = () => RPC_ENDPOINTS[currentRpcIdx];
+
+      async function rpc(method, params = []) {
+        const options = {
+          method: 'POST',
+          mode: 'cors',
+          credentials: 'omit',
+          cache: 'no-store',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })
+        };
+        let attempts = 0;
+        const maxAttempts = 3;
+        while (attempts < maxAttempts) {
+          try {
+            const res = await fetch(getRpc(), options);
+            if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+            const data = await res.json();
+            if (data.error) throw new Error(data.error.message);
+            return data.result;
+          } catch (err) {
+            attempts++;
+            // Switch to next endpoint on network/CORS error
+            if ((err.name === 'TypeError' && err.message.includes('Failed to fetch')) && currentRpcIdx < RPC_ENDPOINTS.length - 1) {
+              console.warn(`RPC ${getRpc()} failed (${err.message}), switching to next`);
+              currentRpcIdx++;
+              continue;
+            }
+            if (attempts >= maxAttempts) throw err;
+            await new Promise(r => setTimeout(r, 800));
+          }
+        }
+      }
+
       const PRECOMPILE = '0x0000000000000000000000000000000000000801';
 
-    async function rpc(method, params = []) {
-      try {
-        const res = await fetch(RPC, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-        const data = await res.json();
-        if (data.error) throw new Error(data.error.message);
-        return data.result;
-      } catch (err) {
-        console.error('RPC error', method, params, err);
-        throw err;
-      }
-    }
+      function hexToNum(hex) { return parseInt(hex || '0x0', 16); }
+      function weiToAxon(wei) { return (Number(wei) / 1e18).toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 6}); }
 
-    function formatHex(hex) { return hex || ''; }
-    function hexToNum(hex) { return parseInt(hex || '0x0', 16); }
-    function weiToAxon(wei) { return (Number(wei) / 1e18).toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 6}); }
-
-    async function getStakeInfo(address) {
-      try {
-        const iface = new ethers.utils.Interface([
-          'function getStakeInfo(address) returns (uint256 totalStake, uint256 pendingReduce, uint64 reduceUnlockHeight)'
-        ]);
-        const data = iface.encodeFunctionData('getStakeInfo', [address]);
-        const raw = await rpc('eth_call', [{ to: PRECOMPILE, data: data }, 'latest']);
-        if (!raw || raw === '0x') return null;
-        const result = iface.decodeFunctionResult('getStakeInfo', raw);
-        return {
-          total: ethers.utils.formatUnits(result.totalStake, 18),
-          pending: ethers.utils.formatUnits(result.pendingReduce, 18),
-          unlock: result.reduceUnlockHeight.toNumber()
-        };
-      } catch (e) {
-        console.error('stakeInfo error', e);
-        return null;
-      }
-    }
-
-    async function loadLatestBlocks() {
-      try {
-        const blockNumHex = await rpc('eth_blockNumber');
-        const blockNum = hexToNum(blockNumHex);
-        document.getElementById('blockNumber').textContent = `Current block: ${blockNum}`;
-
-        const tbody = document.querySelector('#blocksTable tbody');
-        tbody.innerHTML = '';
-        // Fetch only the latest 3 blocks to avoid rate limits
-        const start = Math.max(blockNum - 2, 0);
-        for (let i = start; i <= blockNum; i++) {
-          const block = await rpc('eth_getBlockByNumber', ['0x' + i.toString(16), false]);
-          if (!block) continue;
-          const time = new Date(Number(block.timestamp) * 1000).toLocaleString();
-          tbody.innerHTML += `<tr>
-            <td class="mono">${i}</td>
-            <td class="mono">${block.hash.slice(0, 16)}...</td>
-            <td>${time}</td>
-            <td>${block.transactions.length}</td>
-          </tr>`;
+      async function getStakeInfo(address) {
+        try {
+          const iface = new ethers.utils.Interface([
+            'function getStakeInfo(address) returns (uint256 totalStake, uint256 pendingReduce, uint64 reduceUnlockHeight)'
+          ]);
+          const data = iface.encodeFunctionData('getStakeInfo', [address]);
+          const raw = await rpc('eth_call', [{ to: PRECOMPILE, data: data }, 'latest']);
+          if (!raw || raw === '0x') return null;
+          const result = iface.decodeFunctionResult('getStakeInfo', raw);
+          return {
+            total: ethers.utils.formatUnits(result.totalStake, 18),
+            pending: ethers.utils.formatUnits(result.pendingReduce, 18),
+            unlock: result.reduceUnlockHeight.toNumber()
+          };
+        } catch (e) {
+          console.error('stakeInfo error', e);
+          return null;
         }
-      } catch (e) {
-        console.error(e);
       }
-    }
 
-    async function search() {
-      const query = document.getElementById('query').value.trim();
-      const resultDiv = document.getElementById('result');
-      resultDiv.innerHTML = 'Searching...';
-      if (!query) return;
-      try {
-        if (query.startsWith('0x') && query.length === 66) {
-          // Assume tx hash or block hash (66 chars)
-          const tx = await rpc('eth_getTransactionByHash', [query]);
-          if (tx) {
-            resultDiv.innerHTML = `<h2>Transaction</h2>
-              <table>
-                <tr><th>Hash</th><td class="mono">${tx.hash}</td></tr>
-                <tr><th>Block</th><td class="mono">${tx.blockNumber ? weiToAxon(tx.blockNumber) : 'Pending'}</td></tr>
-                <tr><th>From</strong></td><td class="mono value">${tx.from}</td></tr>
-                <tr><th>To</td><td class="mono value">${tx.to || 'Contract Creation'}</td></tr>
-                <tr><th>Value (AXON)</td><td>${weiToAxon(tx.value)}</td></tr>
-                <tr><th>Gas</th><td>limit: ${tx.gas}, used: ${tx.gasUsed || 'n/a'}</td></tr>
-              </table>`;
-            return;
+      async function loadLatestBlocks() {
+        try {
+          const blockNumHex = await rpc('eth_blockNumber');
+          const blockNum = hexToNum(blockNumHex);
+          document.getElementById('blockNumber').textContent = `Current block: ${blockNum}`;
+
+          const tbody = document.querySelector('#blocksTable tbody');
+          tbody.innerHTML = '';
+          // Fetch only the latest 3 blocks to avoid rate limits
+          const start = Math.max(blockNum - 2, 0);
+          for (let i = start; i <= blockNum; i++) {
+            const block = await rpc('eth_getBlockByNumber', ['0x' + i.toString(16), false]);
+            if (!block) continue;
+            const time = new Date(Number(block.timestamp) * 1000).toLocaleString();
+            tbody.innerHTML += `<tr>
+              <td class="mono">${i}</td>
+              <td class="mono">${block.hash.slice(0, 16)}...</td>
+              <td>${time}</td>
+              <td>${block.transactions.length}</td>
+            </tr>`;
           }
-          const block = await rpc('eth_getBlockByHash', [query, true]);
-          if (block) {
-            resultDiv.innerHTML = `<h2>Block</h2>
-              <table>
-                <tr><th>Number</th><td class="mono">${weiToAxon(block.number)}</td></tr>
-                <tr><th>Hash</th><td class="mono">${block.hash}</td></tr>
-                <tr><th>Timestamp</th><td>${new Date(Number(block.timestamp)*1000).toLocaleString()}</td></tr>
-                <tr><th>Transactions</th><td>${block.transactions.length}</td></tr>
-                <tr><th>Gas Used</th><td>${weiToAxon(block.gasUsed)}</td></tr>
-                <tr><th>Miner</th><td class="mono">${block.miner}</td></tr>
-              </table>`;
-            return;
-          }
-        } else if (/^0x[0-9a-fA-F]{40}$/.test(query)) {
-          // Address
-          const balWei = await rpc('eth_getBalance', [query, 'latest']);
-          const bal = weiToAxon(balWei);
-          const code = await rpc('eth_getCode', [query, 'latest']);
-          const isContract = code && code !== '0x';
-          const stake = await getStakeInfo(query);
-          let html = `<h2>Address</h2>
-            <table>
-              <tr><th>Address</th><td class="mono value">${query}</td></tr>
-              <tr><th>Balance (AXON)</th><td>${bal}</td></tr>
-              <tr><th>Contract</th><td>${isContract ? 'Yes' : 'No (EOA)'}</td></tr>`;
-          if (stake) {
-            html += `
-              <tr><th>Total Stake</th><td>${stake.total} AXON</td></tr>
-              <tr><th>Pending Reduction</th><td>${stake.pending} AXON</td></tr>
-              <tr><th>Unlock Height</th><td>${stake.unlock}</td></tr>`;
-          }
-          html += `</table>`;
-          resultDiv.innerHTML = html;
-          return;
-        } else if (!isNaN(query)) {
-          const block = await rpc('eth_getBlockByNumber', ['0x' + BigInt(query).toString(16), false]);
-          if (block) {
-            resultDiv.innerHTML = `<h2>Block</h2>
-              <table>
-                <tr><th>Number</th><td class="mono">${weiToAxon(block.number)}</td></tr>
-                <tr><th>Hash</th><td class="mono">${block.hash}</td></tr>
-                <tr><th>Timestamp</th><td>${new Date(Number(block.timestamp)*1000).toLocaleString()}</td></tr>
-                <tr><th>Transactions</th><td>${block.transactions.length}</td></tr>
-                <tr><th>Gas Used</th><td>${weiToAxon(block.gasUsed)}</td></tr>
-                <tr><th>Miner</th><td class="mono">${block.miner}</td></tr>
-              </table>`;
-            return;
-          }
+        } catch (e) {
+          console.error(e);
+          document.getElementById('blockNumber').textContent = 'Error loading blocks.';
         }
-        resultDiv.innerHTML = '<p class="error">Not found or invalid input.</p>';
-      } catch (e) {
-        resultDiv.innerHTML = `<p class="error">Error: ${e.message}</p>`;
       }
-    }
 
-    // Initial load
-    loadLatestBlocks();
-    setInterval(loadLatestBlocks, 60000); // every 60s
-  </script>
+      async function search() {
+        const query = document.getElementById('query').value.trim();
+        const resultDiv = document.getElementById('result');
+        resultDiv.innerHTML = 'Searching...';
+        if (!query) return;
+        try {
+          if (query.startsWith('0x') && query.length === 66) {
+            // Assume tx hash or block hash (66 chars)
+            const tx = await rpc('eth_getTransactionByHash', [query]);
+            if (tx) {
+              resultDiv.innerHTML = `<h2>Transaction</h2>
+                <table>
+                  <tr><th>Hash</th><td class="mono">${tx.hash}</td></tr>
+                  <tr><th>Block</th><td class="mono">${tx.blockNumber ? weiToAxon(tx.blockNumber) : 'Pending'}</td></tr>
+                  <tr><th>From</strong></td><td class="mono value">${tx.from}</td></tr>
+                  <tr><th>To</td><td class="mono value">${tx.to || 'Contract Creation'}</td></tr>
+                  <tr><th>Value (AXON)</th><td>${weiToAxon(tx.value)}</td></tr>
+                  <tr><th>Gas</th><td>limit: ${tx.gas}, used: ${tx.gasUsed || 'n/a'}</td></tr>
+                </table>`;
+              return;
+            }
+            const block = await rpc('eth_getBlockByHash', [query, true]);
+            if (block) {
+              resultDiv.innerHTML = `<h2>Block</h2>
+                <table>
+                  <tr><th>Number</th><td class="mono">${weiToAxon(block.number)}</td></tr>
+                  <tr><th>Hash</th><td class="mono">${block.hash}</td></tr>
+                  <tr><th>Timestamp</th><td>${new Date(Number(block.timestamp)*1000).toLocaleString()}</td></tr>
+                  <tr><th>Transactions</th><td>${block.transactions.length}</td></tr>
+                  <tr><th>Gas Used</th><td>${weiToAxon(block.gasUsed)}</td></tr>
+                  <tr><th>Miner</th><td class="mono">${block.miner}</td></tr>
+                </table>`;
+              return;
+            }
+          } else if (/^0x[0-9a-fA-F]{40}$/.test(query)) {
+            // Address
+            const balWei = await rpc('eth_getBalance', [query, 'latest']);
+            const bal = weiToAxon(balWei);
+            const code = await rpc('eth_getCode', [query, 'latest']);
+            const isContract = code && code !== '0x';
+            const stake = await getStakeInfo(query);
+            let html = `<h2>Address</h2>
+              <table>
+                <tr><th>Address</th><td class="mono value">${query}</td></tr>
+                <tr><th>Balance (AXON)</th><td>${bal}</td></tr>
+                <tr><th>Contract</th><td>${isContract ? 'Yes' : 'No (EOA)'}</td></tr>`;
+            if (stake) {
+              html += `
+                <tr><th>Total Stake</th><td>${stake.total} AXON</td></tr>
+                <tr><th>Pending Reduction</th><td>${stake.pending} AXON</td></tr>
+                <tr><th>Unlock Height</th><td>${stake.unlock}</td></tr>`;
+            }
+            html += `</table>`;
+            resultDiv.innerHTML = html;
+            return;
+          } else if (!isNaN(query)) {
+            const block = await rpc('eth_getBlockByNumber', ['0x' + BigInt(query).toString(16), false]);
+            if (block) {
+              resultDiv.innerHTML = `<h2>Block</h2>
+                <table>
+                  <tr><th>Number</th><td class="mono">${weiToAxon(block.number)}</td></tr>
+                  <tr><th>Hash</th><td class="mono">${block.hash}</td></tr>
+                  <tr><th>Timestamp</th><td>${new Date(Number(block.timestamp)*1000).toLocaleString()}</td></tr>
+                  <tr><th>Transactions</th><td>${block.transactions.length}</td></tr>
+                  <tr><th>Gas Used</th><td>${weiToAxon(block.gasUsed)}</td></tr>
+                  <tr><th>Miner</th><td class="mono">${block.miner}</td></tr>
+                </table>`;
+              return;
+            }
+          }
+          resultDiv.innerHTML = '<p class="error">Not found or invalid input.</p>';
+        } catch (e) {
+          resultDiv.innerHTML = `<p class="error">Error: ${e.message}</p>`;
+        }
+      }
+
+      // Initial load
+      loadLatestBlocks();
+      setInterval(loadLatestBlocks, 60000); // every 60s
+    </script>
 </body>
 </html>
