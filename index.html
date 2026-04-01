@@ -91,7 +91,9 @@
 
         const tbody = document.querySelector('#blocksTable tbody');
         tbody.innerHTML = '';
-        for (let i = Math.max(blockNum - 10, 0); i <= blockNum; i++) {
+        // Fetch only the latest 3 blocks to avoid rate limits
+        const start = Math.max(blockNum - 2, 0);
+        for (let i = start; i <= blockNum; i++) {
           const block = await rpc('eth_getBlockByNumber', ['0x' + i.toString(16), false]);
           if (!block) continue;
           const time = new Date(Number(block.timestamp) * 1000).toLocaleString();
@@ -185,7 +187,7 @@
 
     // Initial load
     loadLatestBlocks();
-    setInterval(loadLatestBlocks, 15000); // every 15s
+    setInterval(loadLatestBlocks, 60000); // every 60s
   </script>
 </body>
 </html>
