@@ -45,18 +45,24 @@
 
     <script src="https://cdn.ethers.io/lib/ethers-5.2.umd.min.js"></script>
     <script>
-      const RPC = 'https://mainnet-rpc.axonchain.ai/';
+      const RPC = 'https://api.codetabs.com/v1/proxy?quest=https://mainnet-rpc.axonchain.ai/';
       const PRECOMPILE = '0x0000000000000000000000000000000000000801';
 
     async function rpc(method, params = []) {
-      const res = await fetch(RPC, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message);
-      return data.result;
+      try {
+        const res = await fetch(RPC, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error.message);
+        return data.result;
+      } catch (err) {
+        console.error('RPC error', method, params, err);
+        throw err;
+      }
     }
 
     function formatHex(hex) { return hex || ''; }
