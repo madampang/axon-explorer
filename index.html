@@ -43,8 +43,10 @@
     </div>
   </div>
 
-  <script>
-    const RPC = 'https://mainnet-rpc.axonchain.ai/';
+    <script src="https://cdn.ethers.io/lib/ethers-5.2.umd.min.js"></script>
+    <script>
+      const RPC = 'https://mainnet-rpc.axonchain.ai/';
+      const PRECOMPILE = '0x0000000000000000000000000000000000000801';
 
     async function rpc(method, params = []) {
       const res = await fetch(RPC, {
@@ -60,6 +62,26 @@
     function formatHex(hex) { return hex || ''; }
     function hexToNum(hex) { return parseInt(hex || '0x0', 16); }
     function weiToAxon(wei) { return (Number(wei) / 1e18).toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 6}); }
+
+    async function getStakeInfo(address) {
+      try {
+        const iface = new ethers.utils.Interface([
+          'function getStakeInfo(address) returns (uint256 totalStake, uint256 pendingReduce, uint64 reduceUnlockHeight)'
+        ]);
+        const data = iface.encodeFunctionData('getStakeInfo', [address]);
+        const raw = await rpc('eth_call', [{ to: PRECOMPILE, data: data }, 'latest']);
+        if (!raw || raw === '0x') return null;
+        const result = iface.decodeFunctionResult('getStakeInfo', raw);
+        return {
+          total: ethers.utils.formatUnits(result.totalStake, 18),
+          pending: ethers.utils.formatUnits(result.pendingReduce, 18),
+          unlock: result.reduceUnlockHeight.toNumber()
+        };
+      } catch (e) {
+        console.error('stakeInfo error', e);
+        return null;
+      }
+    }
 
     async function loadLatestBlocks() {
       try {
@@ -125,12 +147,20 @@
           const bal = weiToAxon(balWei);
           const code = await rpc('eth_getCode', [query, 'latest']);
           const isContract = code && code !== '0x';
-          resultDiv.innerHTML = `<h2>Address</h2>
+          const stake = await getStakeInfo(query);
+          let html = `<h2>Address</h2>
             <table>
               <tr><th>Address</th><td class="mono value">${query}</td></tr>
               <tr><th>Balance (AXON)</th><td>${bal}</td></tr>
-              <tr><th>Contract</th><td>${isContract ? 'Yes' : 'No (EOA)'}</td></tr>
-            </table>`;
+              <tr><th>Contract</th><td>${isContract ? 'Yes' : 'No (EOA)'}</td></tr>`;
+          if (stake) {
+            html += `
+              <tr><th>Total Stake</th><td>${stake.total} AXON</td></tr>
+              <tr><th>Pending Reduction</th><td>${stake.pending} AXON</td></tr>
+              <tr><th>Unlock Height</th><td>${stake.unlock}</td></tr>`;
+          }
+          html += `</table>`;
+          resultDiv.innerHTML = html;
           return;
         } else if (!isNaN(query)) {
           const block = await rpc('eth_getBlockByNumber', ['0x' + BigInt(query).toString(16), false]);
