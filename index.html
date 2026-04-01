@@ -8,6 +8,9 @@
     body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
     .container { max-width: 900px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
     h1 { color: #333; }
+    .config-bar { display: flex; gap: 8px; margin-bottom: 12px; font-size: 0.9em; align-items: center; }
+    .config-bar input { padding: 4px; border: 1px solid #ddd; border-radius: 4px; width: 300px; }
+    .config-bar button { padding: 4px 10px; background: #0066cc; color: white; border: none; border-radius: 4px; cursor: pointer; }
     .search-box { display: flex; gap: 8px; margin-bottom: 20px; }
     input { flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
     button { padding: 8px 16px; background: #0066cc; color: white; border: none; border-radius: 4px; cursor: pointer; }
@@ -20,11 +23,18 @@
     .value { color: #0066cc; }
     .error { color: red; }
     #blockNumber { font-size: 0.9em; color: #666; }
+    .log { background:#eee; padding:8px; border-radius:4px; margin:8px 0; white-space: pre-wrap; font-family: monospace; font-size: 0.8em; }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>Axon Explorer</h1>
+    <div class="config-bar">
+      <label>RPC:</label>
+      <input type="text" id="rpcUrl" value="https://mainnet-rpc.axonchain.ai/" placeholder="https://mainnet-rpc.axonchain.ai/">
+      <button onclick="testRpc()">Test & Save</button>
+      <span id="rpcStatus"></span>
+    </div>
     <div id="blockNumber">Loading block...</div>
 
     <div class="search-box">
@@ -33,6 +43,7 @@
     </div>
 
     <div id="result"></div>
+    <div id="log" class="log" style="display:none;"></div>
 
     <div class="section">
       <h2>Latest Blocks</h2>
@@ -45,13 +56,38 @@
 
     <script src="https://cdn.ethers.io/lib/ethers-5.2.umd.min.js"></script>
     <script>
-      // Endpoints that work with CORS
-      const RPC_ENDPOINTS = [
-        'https://mainnet-rpc.axonchain.ai/',
-        'https://rpc.axonchain.ai/'
-      ];
-      let currentRpcIdx = 0;
-      const getRpc = () => RPC_ENDPOINTS[currentRpcIdx];
+      const STORAGE_KEY = 'axon_explorer_rpc';
+      let CURRENT_RPC = localStorage.getItem(STORAGE_KEY) || 'https://mainnet-rpc.axonchain.ai/';
+      document.getElementById('rpcUrl').value = CURRENT_RPC;
+
+      function log(msg) {
+        const el = document.getElementById('log');
+        el.style.display = 'block';
+        el.textContent += msg + '\n';
+      }
+
+      async function testRpc() {
+        const url = document.getElementById('rpcUrl').value.trim();
+        document.getElementById('rpcStatus').textContent = 'Testing...';
+        try {
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [] })
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          if (data.error) throw new Error(data.error.message);
+          document.getElementById('rpcStatus').textContent = '✅ OK';
+          localStorage.setItem(STORAGE_KEY, url);
+          CURRENT_RPC = url;
+          log('RPC OK: ' + url);
+          loadLatestBlocks();
+        } catch (e) {
+          document.getElementById('rpcStatus').textContent = '❌ Fail';
+          log('RPC failed: ' + e.message);
+        }
+      }
 
       async function rpc(method, params = []) {
         const payload = { jsonrpc: '2.0', id: 1, method, params };
@@ -60,32 +96,18 @@
           mode: 'cors',
           credentials: 'omit',
           cache: 'no-store',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          },
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
           body: JSON.stringify(payload)
         };
-        let attempts = 0;
-        const maxAttempts = 3;
-        while (attempts < maxAttempts) {
-          try {
-            const res = await fetch(getRpc(), options);
-            if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
-            const data = await res.json();
-            if (data.error) throw new Error(data.error.message);
-            return data.result;
-          } catch (err) {
-            attempts++;
-            // On network/CORS error, try next endpoint
-            if ((err.name === 'TypeError' || (err.message && err.message.includes('Failed'))) && currentRpcIdx < RPC_ENDPOINTS.length - 1) {
-              console.warn(`Endpoint ${getRpc()} failed (${err.message}), switching`);
-              currentRpcIdx++;
-              continue;
-            }
-            if (attempts >= maxAttempts) throw err;
-            await new Promise(r => setTimeout(r, 800));
-          }
+        try {
+          const res = await fetch(CURRENT_RPC, options);
+          if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+          const data = await res.json();
+          if (data.error) throw new Error(data.error.message);
+          return data.result;
+        } catch (err) {
+          console.error('RPC error', method, params, err);
+          throw err;
         }
       }
 
@@ -138,6 +160,7 @@
           console.error(e);
           document.getElementById('blockNumber').textContent = 'Error loading blocks. Tap to retry.';
           document.getElementById('blockNumber').onclick = loadLatestBlocks;
+          log('loadLatestBlocks error: ' + e.message);
         }
       }
 
@@ -213,12 +236,26 @@
           resultDiv.innerHTML = '<p class="error">Not found or invalid input.</p>';
         } catch (e) {
           resultDiv.innerHTML = `<p class="error">Error: ${e.name}: ${e.message}</p>`;
+          log('search error: ' + e.stack);
         }
       }
 
-      // Initial load
-      loadLatestBlocks();
-      setInterval(loadLatestBlocks, 60000);
+      // Initial test RPC then load
+      testRpc();
+      // Auto-refresh blocks every 60s after successful load
+      let loadInterval;
+      function startInterval() { loadInterval = setInterval(loadLatestBlocks, 60000); }
+      function stopInterval() { clearInterval(loadInterval); }
+      // Override loadLatestBlocks to start interval only after first success
+      const originalLoad = loadLatestBlocks;
+      loadLatestBlocks = async function() {
+        try {
+          await originalLoad();
+          if (!loadInterval) startInterval();
+        } catch (e) {
+          console.error('Initial load failed', e);
+        }
+      };
     </script>
 </body>
 </html>
