@@ -85,8 +85,9 @@ async function main() {
       console.log(`Heartbeat confirmed. Block: ${receipt.blockNumber}, gasUsed: ${receipt.gasUsed}`);
       await setLastHeartBlock(currentBlock);
     } catch (waitErr) {
-      // Could not parse receipt fully
-      console.log(`Tx sent, receipt parse error: ${waitErr.message}. Updating last heart anyway.`);
+      // Receipt parsing can fail due to node quirks (e.g., transactionIndex overflow).
+      // As long as tx was sent, we consider it success.
+      console.log(`Tx sent (${tx.hash}), receipt parse error: ${waitErr.message.split('\n')[0]}. Updating last heart anyway.`);
       await setLastHeartBlock(currentBlock);
     }
   } catch (err) {
