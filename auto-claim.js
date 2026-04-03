@@ -64,8 +64,8 @@ async function main() {
   }
 
   try {
-    const wallet = new ethers.Wallet(pk);
     const provider = new ethers.JsonRpcProvider(RPC_URL);
+    const wallet = new ethers.Wallet(pk).connect(provider);
 
     console.log(`[${new Date().toISOString()}] Checking ${wallet.address}...`);
 
