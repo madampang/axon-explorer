@@ -114,7 +114,31 @@ async function main() {
         gasLimit: 100000,
       });
       console.log(`Tx sent: ${tx.hash}`);
-      const receipt = await tx.wait();
+
+      let receipt;
+      try {
+        receipt = await tx.wait();
+      } catch (err) {
+        // Workaround for ethers.js bug: transactionIndex overflow causes BAD_DATA
+        if (err.code === 'BAD_DATA' && /transactionIndex/.test(err.message)) {
+          console.log('Receipt parse error (transactionIndex overflow). Fetching raw receipt...');
+          try {
+            const raw = await provider.send('eth_getTransactionReceipt', [tx.hash]);
+            receipt = {
+              blockNumber: parseInt(raw.blockNumber, 16),
+              gasUsed: parseInt(raw.gasUsed, 16),
+              status: raw.status,
+              // transactionHash is tx.hash
+            };
+          } catch (rawErr) {
+            console.error('Failed to fetch raw receipt:', rawErr.message);
+            throw rawErr;
+          }
+        } else {
+          throw err;
+        }
+      }
+
       console.log(`Claimed! Block: ${receipt.blockNumber}, gasUsed: ${receipt.gasUsed}`);
       recordClaim(tx.hash, pending, receipt.blockNumber);
       sendNotification(`✅ AXON claim successful! ${pending} AXON claimed. Tx: ${tx.hash}`);
