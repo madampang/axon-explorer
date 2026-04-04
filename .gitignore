@@ -1,0 +1,6 @@
+# Local secrets (never commit)
+.openrouter_key
+.axon_pk
+*.pem
+*.key
+.env

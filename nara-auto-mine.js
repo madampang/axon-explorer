@@ -6,7 +6,20 @@ const CHECK_INTERVAL = 60; // seconds between quest checks (rate limit friendly)
 const QUEST_CMD = 'npx naracli quest get --json';
 const ANSWER_CMD = (answer, model) => `npx naracli quest answer "${answer.replace(/"/g, '\\"')}" --agent hdr-agent --model ${model} --relay`;
 
-const OPENROUTER_KEY = 'REDACTED';
+// Load OpenRouter key from environment or local file (never commit this!)
+const OPENROUTER_KEY = (() => {
+  // 1) Check env var
+  if (process.env.OPENROUTER_API_KEY) return process.env.OPENROUTER_API_KEY;
+  // 2) Check local file (git-ignored)
+  try {
+    if (fs.existsSync('/root/.openclaw/workspace/.openrouter_key')) {
+      return fs.readFileSync('/root/.openclaw/workspace/.openrouter_key', 'utf-8').trim();
+    }
+  } catch (e) {}
+  // 3) Fallback to old key (will be removed after rotation)
+  return 'REDACTED';
+})();
+
 const OPENROUTER_MODEL = 'qwen/qwen3.6-plus:free';
 const ALTERNATE_MODEL = 'mistralai/mixtral-8x7b-instruct:free';
 
@@ -116,9 +129,7 @@ function getOpenRouterAnswer(question, options, type) {
             if (match) resolve(match[0].toUpperCase());
             else resolve(null);
           } else {
-            // open-ended: clean, remove quotes, trim
             let answer = text.replace(/["']/g, '').trim();
-            // Remove any leading "Answer:" etc.
             answer = answer.replace(/^answer\s*:?\s*/i, '');
             resolve(answer || null);
           }
@@ -138,6 +149,10 @@ function getOpenRouterAnswer(question, options, type) {
     req.end();
   });
 }
+
+let lastRound = null;
+let consecutiveErrors = 0;
+let backoffUntil = 0;
 
 log('NARA auto-miner started (OpenRouter robust)');
 
