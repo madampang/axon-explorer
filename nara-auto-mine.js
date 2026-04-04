@@ -16,8 +16,8 @@ const OPENROUTER_KEY = (() => {
       return fs.readFileSync('/root/.openclaw/workspace/.openrouter_key', 'utf-8').trim();
     }
   } catch (e) {}
-  // 3) Fallback to old key (will be removed after rotation)
-  return 'REDACTED';
+  // 3) No key found
+  throw new Error('OpenRouter API key not found. Set OPENROUTER_API_KEY env or create .openrouter_key file.');
 })();
 
 const OPENROUTER_MODEL = 'qwen/qwen3.6-plus:free';
